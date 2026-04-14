@@ -1,15 +1,52 @@
-# Secrets
+# =========================
+# 🔐 Secrets
+# =========================
 .env
 .env.*
 !.env.example
 
-# Python artifacts
+# =========================
+# 🐍 Python artifacts
+# =========================
 __pycache__/
 *.py[cod]
+*.pyo
+*.pyd
+
+# =========================
+# 🧪 Virtual environments
+# =========================
 .venv/
+venv/
+env/
+ENV/
 
-# Local/temporary files
-tempCodeRunnerFile.py
-
-# Vector index artifacts (rebuildable)
+# =========================
+# 🧠 Vector DB (RAG)
+# =========================
 faiss_index/
+
+# =========================
+# 🛠️ IDE / Editor
+# =========================
+.vscode/
+.idea/
+
+# =========================
+# 🗑️ Temporary files
+# =========================
+tempCodeRunnerFile.py
+*.log
+*.tmp
+
+# =========================
+# 💻 OS files
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# 📦 Optional (large files)
+# =========================
+# Uncomment if you don't want to push PDFs
+# *.pdf
