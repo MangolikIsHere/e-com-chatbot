@@ -2,36 +2,39 @@
 # 1. FastAPI Setup
 # =========================
 from fastapi import FastAPI
-
+from pydantic import BaseModel, Field
+import os
+from dotenv import load_dotenv
+from pathlib import Path
 
 app = FastAPI()
 
 # =========================
 # 2. Load ENV variables
 # =========================
-from dotenv import load_dotenv
-import os
-from pathlib import Path
-
 load_dotenv()
 
 api_key = os.getenv("GOOGLE_API_KEY")
+if not api_key:
+    raise ValueError("❌ GOOGLE_API_KEY not found in .env file")
 
 # =========================
-# 3. Gemini Setup
+# 3. Gemini Setup (NEW SDK)
 # =========================
-import google.generativeai as genai
+from google import genai
 
-model = None
-if api_key:
-    genai.configure(api_key=api_key)
-    model = genai.GenerativeModel("gemini-2.5-flash")
+client = genai.Client(api_key=api_key)
 
 def ask_gemini(prompt):
-    if model is None:
-        raise RuntimeError("GOOGLE_API_KEY not found. Add it to your .env file before calling /chat.")
-    response = model.generate_content(prompt)
-    return response.text
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt,
+        config={
+            "temperature": 0.3,
+            "max_output_tokens": 500
+        }
+    )
+    return response.text or "No response"
 
 # =========================
 # 4. RAG Setup (PDF)
@@ -39,13 +42,13 @@ def ask_gemini(prompt):
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import FAISS
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 
 pdf_candidates = [Path("ml_book.pdf"), Path("ml-book.pdf")]
-pdf_path = next((candidate for candidate in pdf_candidates if candidate.exists()), None)
+pdf_path = next((c for c in pdf_candidates if c.exists()), None)
 
 if pdf_path is None:
-    raise FileNotFoundError("No PDF found. Expected ml_book.pdf or ml-book.pdf in project root.")
+    raise FileNotFoundError("❌ No PDF found (ml_book.pdf or ml-book.pdf)")
 
 loader = PyPDFLoader(str(pdf_path))
 documents = loader.load()
@@ -75,9 +78,14 @@ else:
 retriever = db.as_retriever(search_kwargs={"k": 4})
 
 # =========================
-# 5. Chat Memory (per session simple)
+# 5. Session-based Memory
 # =========================
-chat_history = []
+chat_sessions = {}
+
+def get_history(session_id):
+    if session_id not in chat_sessions:
+        chat_sessions[session_id] = []
+    return chat_sessions[session_id]
 
 def format_history(history):
     formatted = ""
@@ -89,24 +97,36 @@ def format_history(history):
 # 6. Request Model
 # =========================
 class ChatRequest(BaseModel):
-    message: str
+    message: str = Field(..., min_length=1)
+    session_id: str
 
 # =========================
-# 7. API Endpoint
+# 7. Health Check Route
+# =========================
+@app.get("/")
+def home():
+    return {"message": "✅ ML Tutor Chatbot API running"}
+
+# =========================
+# 8. Chat Endpoint
 # =========================
 @app.post("/chat")
 def chat(request: ChatRequest):
     query = request.message
+    session_id = request.session_id
 
     try:
+        # Get session memory
+        history = get_history(session_id)
+
         # Retrieve context
         docs = retriever.invoke(query)
         context = " ".join([doc.page_content for doc in docs])
 
-        # History
-        history_text = format_history(chat_history)
+        # Format history
+        history_text = format_history(history)
 
-        # Mode
+        # Mode detection
         if "simple" in query.lower() or "beginner" in query.lower():
             mode = "Explain in very simple terms like a beginner."
         else:
@@ -128,6 +148,7 @@ Context:
 Rules:
 - Answer ONLY from the context
 - If not found, say "I don't know from given material"
+- Keep answers clear and structured
 
 Question:
 {query}
@@ -135,16 +156,16 @@ Question:
 Answer:
 """
 
+        # Generate response
         answer = ask_gemini(prompt)
 
-        # Save memory
-        chat_history.append((query, answer))
+        # Save to memory
+        history.append((query, answer))
 
         return {
-            "response": answer
+            "response": answer,
+            "session_id": session_id
         }
 
     except Exception as e:
-        return {
-            "error": str(e)
-        }
+        return {"error": str(e)}
